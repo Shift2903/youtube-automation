@@ -144,19 +144,30 @@ def process_videos(youtube, videos_to_process, email=""):
             print(f"  -> Traduction en '{lang_code}'...")
             translated_title = advanced_translate_mymemory(original_title, original_lang, lang_code, email)
             translated_description = advanced_translate_mymemory(original_description, original_lang, lang_code, email)
-            
-            # --- CORRECTION FINALE ---
-            # On vérifie que le titre a été traduit et que la description n'est pas None (elle peut être vide)
-            if translated_title and translated_description is not None:
+            if translated_title is not None and translated_description is not None:
                 localizations_data[lang_code] = {"title": translated_title, "description": translated_description}
-        
         if not localizations_data: print("=> Aucune traduction générée."); continue
         try:
             update_parts = ['localizations']
-            if not original_snippet.get('defaultLanguage'):
-                original_snippet['defaultLanguage'] = DEFAULT_VIDEO_LANGUAGE; update_parts.append('snippet')
             update_body = {'id': video_id, 'localizations': localizations_data}
-            if 'snippet' in update_parts: update_body['snippet'] = original_snippet
+
+            # --- CORRECTION FINALE ---
+            if not original_snippet.get('defaultLanguage'):
+                print(f"=> Info : Langue par défaut non définie. Ajout de '{DEFAULT_VIDEO_LANGUAGE}'.")
+                # On crée un snippet "propre" avec seulement les informations modifiables
+                clean_snippet = {
+                    'title': original_snippet['title'],
+                    'description': original_snippet.get('description', ''),
+                    'categoryId': original_snippet['categoryId'],
+                    'defaultLanguage': DEFAULT_VIDEO_LANGUAGE
+                }
+                # On ajoute les tags s'ils existent
+                if 'tags' in original_snippet:
+                    clean_snippet['tags'] = original_snippet['tags']
+                
+                update_body['snippet'] = clean_snippet
+                update_parts.append('snippet')
+            
             youtube.videos().update(part=','.join(update_parts), body=update_body).execute()
             print("=> ✅ Succès ! Traductions ajoutées/mises à jour.")
         except HttpError as e: print(f"=> ❌ Échec de la mise à jour : {e}")
@@ -190,7 +201,6 @@ def main():
         print(f"Mode auto : {len(videos_to_process)} nouvelle(s) vidéo(s) à traduire aujourd'hui.")
         process_videos(youtube, videos_to_process, email_address)
         print("Tâche de surveillance automatique terminée.")
-        return
     else:
         # Ce mode est pour l'usage local, pour générer le token.json
         print("Lancement en mode interactif pour l'authentification...")
