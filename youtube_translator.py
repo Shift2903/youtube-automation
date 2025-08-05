@@ -36,7 +36,6 @@ def get_authenticated_service():
             print("Rafraîchissement du token...")
             creds.refresh(google.auth.transport.requests.Request())
     else:
-        # Ce mode est pour l'usage local, pour générer le token.json
         print("Authentification via les fichiers locaux...")
         if os.path.exists(TOKEN_FILE):
             creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
@@ -145,8 +144,12 @@ def process_videos(youtube, videos_to_process, email=""):
             print(f"  -> Traduction en '{lang_code}'...")
             translated_title = advanced_translate_mymemory(original_title, original_lang, lang_code, email)
             translated_description = advanced_translate_mymemory(original_description, original_lang, lang_code, email)
-            if translated_title and translated_description:
+            
+            # --- CORRECTION FINALE ---
+            # On vérifie que le titre a été traduit et que la description n'est pas None (elle peut être vide)
+            if translated_title and translated_description is not None:
                 localizations_data[lang_code] = {"title": translated_title, "description": translated_description}
+        
         if not localizations_data: print("=> Aucune traduction générée."); continue
         try:
             update_parts = ['localizations']
@@ -171,13 +174,11 @@ def main():
         
         all_videos_details = get_videos_details(youtube, all_video_ids)
         
-        # NOUVELLE LOGIQUE : Filtrage par date
         videos_of_the_day = []
         today_utc = datetime.now(timezone.utc).date()
         print(f"Date du jour (UTC) : {today_utc}. Filtrage des vidéos...")
 
         for video in all_videos_details:
-            # La date est dans 'status' pour les vidéos normales/programmées, ou dans 'snippet' pour les anciennes
             publish_time_str = video.get('status', {}).get('publishAt') or video.get('snippet', {}).get('publishedAt')
             if publish_time_str:
                 publish_date = datetime.fromisoformat(publish_time_str.replace('Z', '+00:00')).date()
@@ -185,10 +186,7 @@ def main():
                     videos_of_the_day.append(video)
         
         print(f"{len(videos_of_the_day)} vidéo(s) publiée(s) ou programmée(s) pour aujourd'hui.")
-
-        # On ne garde que celles qui ne sont pas encore traduites
         videos_to_process = [v for v in videos_of_the_day if not v.get('localizations')]
-        
         print(f"Mode auto : {len(videos_to_process)} nouvelle(s) vidéo(s) à traduire aujourd'hui.")
         process_videos(youtube, videos_to_process, email_address)
         print("Tâche de surveillance automatique terminée.")
