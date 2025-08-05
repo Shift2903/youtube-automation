@@ -161,8 +161,8 @@ def process_videos(youtube, videos_to_process, email=""):
                     'categoryId': original_snippet['categoryId'],
                     'defaultLanguage': DEFAULT_VIDEO_LANGUAGE
                 }
-                # On ajoute les tags s'ils existent
-                if 'tags' in original_snippet:
+                # On ajoute les tags s'ils existent et ne sont pas vides
+                if original_snippet.get('tags'):
                     clean_snippet['tags'] = original_snippet['tags']
                 
                 update_body['snippet'] = clean_snippet
@@ -201,6 +201,7 @@ def main():
         print(f"Mode auto : {len(videos_to_process)} nouvelle(s) vidéo(s) à traduire aujourd'hui.")
         process_videos(youtube, videos_to_process, email_address)
         print("Tâche de surveillance automatique terminée.")
+        return
     else:
         # Ce mode est pour l'usage local, pour générer le token.json
         print("Lancement en mode interactif pour l'authentification...")
