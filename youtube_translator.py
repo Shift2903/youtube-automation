@@ -2,9 +2,10 @@ import os
 import re
 import json
 import isodate
-import requests
-import time
+import requests 
+import time 
 import sys
+from datetime import datetime, timezone
 
 import google.auth.transport.requests
 from google.oauth2.credentials import Credentials
@@ -13,17 +14,16 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 # --- CONFIGURATION ---
-CLIENT_SECRETS_FILE = "client_secrets.json"
+CLIENT_SECRETS_FILE = "client_secrets.json" 
 TOKEN_FILE = "token.json"
 SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
 API_SERVICE_NAME = "youtube"
 API_VERSION = "v3"
 TARGET_LANGUAGES_TOP15 = [
-    'en', 'es', 'hi', 'ar', 'pt', 'bn', 'ru', 'ja', 'de', 'ko', 'tr', 'it', 'vi', 'id'
+    'en', 'es', 'hi', 'ar', 'pt', 'bn', 'ru', 'ja', 'de', 'fr', 'ko', 'tr', 'it', 'vi', 'id'
 ]
 DEFAULT_VIDEO_LANGUAGE = "fr"
 MAX_CHARS_PER_REQUEST = 480
-AUTO_MODE_MIN_DURATION_MINUTES = 7
 
 # --- FONCTIONS ---
 def get_authenticated_service():
@@ -36,6 +36,7 @@ def get_authenticated_service():
             print("Rafraîchissement du token...")
             creds.refresh(google.auth.transport.requests.Request())
     else:
+        # Ce mode est pour l'usage local, pour générer le token.json
         print("Authentification via les fichiers locaux...")
         if os.path.exists(TOKEN_FILE):
             creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
@@ -76,13 +77,8 @@ def advanced_translate_mymemory(text, source_language, target_language, email=""
                     print(f"  -> Limite API atteinte. Tentative {i + 1}/{retries} dans {delay}s...")
                     time.sleep(delay)
                     delay *= 2
-                else:
-                    print(f"  AVERTISSEMENT : Erreur HTTP : {e}")
-                    return chunk_to_translate
-            except Exception as e:
-                print(f"  AVERTISSEMENT : Échec traduction : {e}")
-                return chunk_to_translate
-        print("  ERREUR : Traduction impossible après plusieurs tentatives.")
+                else: return chunk_to_translate
+            except Exception: return chunk_to_translate
         return chunk_to_translate
 
     translated_chunks = []
@@ -90,7 +86,6 @@ def advanced_translate_mymemory(text, source_language, target_language, email=""
         if len(line) < MAX_CHARS_PER_REQUEST:
             translated_chunks.append(translate_chunk(line))
         else:
-            print("    -> Ligne longue détectée, découpage...")
             sub_chunks = []
             remaining_line = line
             while len(remaining_line) > 0:
@@ -102,9 +97,7 @@ def advanced_translate_mymemory(text, source_language, target_language, email=""
                 remaining_line = remaining_line[len(chunk):].lstrip()
             translated_chunks.append(" ".join(sub_chunks))
     translated_text_with_placeholders = "\n".join(translated_chunks)
-    
     translated_caps_words = [translate_chunk(word) for word in caps_words]
-    
     final_translated_text = translated_text_with_placeholders
     for i, emoji in enumerate(emojis): final_translated_text = final_translated_text.replace(f"__EMOJI_{i}__", emoji, 1)
     for i, translated_word in enumerate(translated_caps_words): final_translated_text = final_translated_text.replace(f"__CAPS_{i}__", translated_word.upper(), 1)
@@ -114,10 +107,9 @@ def get_videos_details(youtube, video_ids):
     videos_details = []
     for i in range(0, len(video_ids), 50):
         try:
-            response = youtube.videos().list(part="snippet,localizations,contentDetails", id=",".join(video_ids[i:i+50])).execute()
+            response = youtube.videos().list(part="snippet,localizations,contentDetails,status", id=",".join(video_ids[i:i+50])).execute()
             videos_details.extend(response["items"])
-        except HttpError as e:
-            print(f"Erreur API (détails vidéos) : {e}")
+        except HttpError as e: print(f"Erreur API (détails vidéos) : {e}")
     return videos_details
 
 def get_all_video_ids_from_playlist(youtube, playlist_id):
@@ -132,62 +124,39 @@ def get_all_video_ids_from_playlist(youtube, playlist_id):
             if not next_page_token: break
         print(f"{len(video_ids)} vidéo(s) trouvée(s).")
         return video_ids
-    except HttpError as e:
-        print(f"Erreur API (playlist) : {e}")
-        return []
+    except HttpError as e: print(f"Erreur API (playlist) : {e}"); return []
 
-def process_videos(youtube, videos_to_process, target_languages, email="", is_auto_mode=False):
+def process_videos(youtube, videos_to_process, email=""):
     if not videos_to_process:
-        print("\nAucune vidéo à traiter pour cette sélection.")
+        print("\nAucune vidéo à traduire pour cette sélection.")
         return
     print(f"\n{len(videos_to_process)} vidéo(s) prête(s) à être traduite(s).")
-    
-    if not is_auto_mode:
-        if input("Lancer la traduction ? (o/n) : ").lower() != 'o':
-            print("Opération annulée.")
-            return
-
     print(f"\nDébut du traitement...")
     for index, video in enumerate(videos_to_process):
-        video_id = video["id"]
-        original_snippet = video["snippet"]
-        original_title = original_snippet["title"]
+        video_id, original_snippet, original_title = video["id"], video["snippet"], video["snippet"]["title"]
         print("-" * 50 + f"\nVidéo {index + 1}/{len(videos_to_process)}: '{original_title}'")
-        
         original_description = original_snippet.get("description", "")
         if original_description.strip().startswith("Video created by FL Studio"):
-            print("    -> Remplacement de la description générique.")
             original_description = "Découvrez cette compilation de moments forts sur BeamNG.drive ! Crashs, défis et physique réaliste au rendez-vous.\nN'oubliez pas de liker et de vous abonner pour plus d'aventures !\n#BeamNG #CrashCompilation #Gaming"
-
         original_lang = original_snippet.get("defaultLanguage", "fr")
         localizations_data = video.get('localizations', {})
-        
-        for lang_code in target_languages:
+        for lang_code in TARGET_LANGUAGES_TOP15:
             if lang_code == original_lang: continue
             print(f"  -> Traduction en '{lang_code}'...")
             translated_title = advanced_translate_mymemory(original_title, original_lang, lang_code, email)
             translated_description = advanced_translate_mymemory(original_description, original_lang, lang_code, email)
             if translated_title and translated_description:
                 localizations_data[lang_code] = {"title": translated_title, "description": translated_description}
-
-        if not localizations_data:
-            print("=> Aucune traduction générée.")
-            continue
+        if not localizations_data: print("=> Aucune traduction générée."); continue
         try:
             update_parts = ['localizations']
             if not original_snippet.get('defaultLanguage'):
-                print(f"=> Info : Langue par défaut non définie. Ajout de '{DEFAULT_VIDEO_LANGUAGE}'.")
-                original_snippet['defaultLanguage'] = DEFAULT_VIDEO_LANGUAGE
-                update_parts.append('snippet')
-
+                original_snippet['defaultLanguage'] = DEFAULT_VIDEO_LANGUAGE; update_parts.append('snippet')
             update_body = {'id': video_id, 'localizations': localizations_data}
-            if 'snippet' in update_parts:
-                update_body['snippet'] = original_snippet
-            
+            if 'snippet' in update_parts: update_body['snippet'] = original_snippet
             youtube.videos().update(part=','.join(update_parts), body=update_body).execute()
             print("=> ✅ Succès ! Traductions ajoutées/mises à jour.")
-        except HttpError as e:
-            print(f"=> ❌ Échec de la mise à jour : {e}")
+        except HttpError as e: print(f"=> ❌ Échec de la mise à jour : {e}")
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == '--auto':
@@ -199,25 +168,37 @@ def main():
         if not all_video_ids:
             print("Aucune vidéo trouvée, fin de la tâche.")
             return
+        
         all_videos_details = get_videos_details(youtube, all_video_ids)
         
-        min_duration_seconds = AUTO_MODE_MIN_DURATION_MINUTES * 60
-        all_long_videos = [v for v in all_videos_details if ('duration' in v['contentDetails'] and isodate.parse_duration(v['contentDetails']['duration']).total_seconds() > min_duration_seconds)]
-        videos_to_process = [v for v in all_long_videos if not v.get('localizations')]
+        # NOUVELLE LOGIQUE : Filtrage par date
+        videos_of_the_day = []
+        today_utc = datetime.now(timezone.utc).date()
+        print(f"Date du jour (UTC) : {today_utc}. Filtrage des vidéos...")
+
+        for video in all_videos_details:
+            # La date est dans 'status' pour les vidéos normales/programmées, ou dans 'snippet' pour les anciennes
+            publish_time_str = video.get('status', {}).get('publishAt') or video.get('snippet', {}).get('publishedAt')
+            if publish_time_str:
+                publish_date = datetime.fromisoformat(publish_time_str.replace('Z', '+00:00')).date()
+                if publish_date == today_utc:
+                    videos_of_the_day.append(video)
         
-        print(f"Mode auto : {len(videos_to_process)} nouvelle(s) vidéo(s) longue(s) à traduire.")
-        process_videos(youtube, videos_to_process, TARGET_LANGUAGES_TOP15, email_address, is_auto_mode=True)
+        print(f"{len(videos_of_the_day)} vidéo(s) publiée(s) ou programmée(s) pour aujourd'hui.")
+
+        # On ne garde que celles qui ne sont pas encore traduites
+        videos_to_process = [v for v in videos_of_the_day if not v.get('localizations')]
+        
+        print(f"Mode auto : {len(videos_to_process)} nouvelle(s) vidéo(s) à traduire aujourd'hui.")
+        process_videos(youtube, videos_to_process, email_address)
         print("Tâche de surveillance automatique terminée.")
         return
-
-    # --- MODE INTERACTIF ---
-    # (Le mode interactif est conservé pour les tests locaux, mais ne sera pas utilisé par GitHub Actions)
-    print("*"*60 + "\nBienvenue dans le Traducteur Pro pour YouTube\n" + "*"*60)
-    email_address = input("Email pour API MyMemory (optionnel) : ").strip()
-    youtube = get_authenticated_service()
-    
-    print("Mode interactif non implémenté dans cette version simplifiée.")
-
+    else:
+        # Ce mode est pour l'usage local, pour générer le token.json
+        print("Lancement en mode interactif pour l'authentification...")
+        get_authenticated_service()
+        print("\nAuthentification réussie ! Le fichier 'token.json' a été créé ou mis à jour.")
+        print("Vous pouvez maintenant fermer cette fenêtre.")
 
 if __name__ == "__main__":
     main()
